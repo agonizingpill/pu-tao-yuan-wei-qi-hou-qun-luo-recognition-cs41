@@ -69,6 +69,27 @@ class ReplanInput(Input):
 
 class CompletionInput(Input):
     completed_at: AwareDatetime
+    started_at: AwareDatetime | None = None
+
+    @model_validator(mode='after')
+    def ordered(self):
+        if self.started_at is not None and self.completed_at <= self.started_at:
+            raise ValueError('完灌时间须晚于开灌时间')
+        return self
+
+
+class BackfillInput(Input):
+    code: Code
+    block_id: int = Field(gt=0)
+    started_at: AwareDatetime
+    ended_at: AwareDatetime
+    reason: Narrative
+
+    @model_validator(mode='after')
+    def ordered(self):
+        if self.ended_at <= self.started_at:
+            raise ValueError('完灌时间须晚于开灌时间')
+        return self
 
 
 class ReasonInput(Input):

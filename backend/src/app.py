@@ -145,12 +145,20 @@ def run_evidence(run_id: int, _user=readable):
 
 
 def notify(run):
-    if run['status'] == 'queued':
+    if run['status'] in ('queued', 'review'):
         try:
             redis_client().rpush(QUEUE, str(run['id']))
         except RedisError:
             logger.exception('Redis notification failed; run %s is persisted', run['id'])
     return run
+
+
+def wake_worker(replacement=None):
+    """Nudge the worker after a completion may have queued a replacement batch."""
+    try:
+        redis_client().rpush(QUEUE, str(replacement) if replacement else 'wake')
+    except RedisError:
+        logger.exception('Redis notification failed; queued runs are still persisted')
 
 
 @app.post('/runs', status_code=202)
@@ -200,7 +208,19 @@ def replan(round_id: int, data: schemas.ReplanInput, user=editable):
 def complete(round_id: int, data: schemas.CompletionInput, user=editable):
     with connect() as db:
         lock_ledger(db)
-        return irrigation.finish(db, round_id, data.completed_at, user['name'])
+        round_row = irrigation.finish(db, round_id, data.completed_at, user['name'],
+                                      started_at=data.started_at)
+    wake_worker(round_row.pop('requeued_run', None))
+    return round_row
+
+
+@app.post('/rounds/backfill', status_code=201)
+def backfill(data: schemas.BackfillInput, user=editable):
+    with connect() as db:
+        lock_ledger(db)
+        round_row = irrigation.backfill(db, data, user['name'])
+    wake_worker(round_row.pop('requeued_run', None))
+    return round_row
 
 
 @app.post('/rounds/{round_id}/cancel')

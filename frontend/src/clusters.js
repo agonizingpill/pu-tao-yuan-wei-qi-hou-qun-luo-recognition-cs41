@@ -14,19 +14,28 @@ export function clusterPage(runs, run, labels, canWrite, supervisor) {
   const result = run?.result;
   const healthRows = run?.coverage.map(c => `<tr class="${c.deficient?'warn-row':''}"><td>${safe(c.code)}</td><td>${safe(c.sensor)}</td><td>${c.received} / ${c.expected}</td>
     <td>${c.missing.map(m => `${safe(m.day.slice(5))} ${slots[m.slot]}`).join('、') || '齐全'}</td></tr>`);
+  const excluded = run?.excluded_shifts || [];
+  const exclusionRows = excluded.map(e => `<tr class="warn-row"><td>${safe(e.block)}</td>
+    <td>${safe(e.day.slice(5))} ${slots[e.slot]}</td>
+    <td>${e.temp_c === null || e.temp_c === undefined ? '—' : `${num(e.temp_c)} ° / ${num(e.rh_pct,0)}%`}</td>
+    <td>${e.rounds.map(code => safe(code)).join('、') || '—'}</td>
+    <td>${e.applied ? '本批次按缺测入模' : '未进入本批次快照（读数留档）'}</td></tr>`);
   const review = run?.status === 'review';
-  return `${title('微气候群落', '三个连续日期，每地块应有六笔昼夜采样。超过 25% 缺测时停止发布。')}
+  return `${title('微气候群落', '三个连续日期，每地块应有六笔昼夜采样。与完灌时段重叠的班次读数留档，但按缺测入模。')}
     <div class="spread ${review ? 'review-spread' : ''}">
       <section>
-        <div class="section-label"><h2>识别批次</h2>${run ? `<span class="tag ${review || run.status==='blocked' ? 'warning' : 'neutral'}">${runStates[run.status]}</span>` : ''}</div>
+        <div class="section-label"><h2>识别批次</h2>${run ? `<span class="tag ${review || run.status==='blocked' || run.status==='superseded' ? 'warning' : 'neutral'}">${runStates[run.status]}</span>` : ''}</div>
         ${runs.length ? `<div class="selector">${select('run','查看采样窗口',runs.map(r => [r.id,`${r.window_end} · ${runStates[r.status]} · #${r.id}`]), run?.id)}</div>` : notice('从有完整采样的窗口发起第一次识别。')}
         ${run?.error ? notice(run.error, 'caution') : ''}
         ${run?.status === 'queued' ? notice('采样快照已冻结，正在等待后台识别。') : ''}
+        ${run?.status === 'superseded' ? notice(`晚到的完灌记录使本批次作废${run.superseded_by_code ? `，已按同一窗口换窗重算为 #${run.superseded_by}` : ''}。`, 'caution') : ''}
         ${review ? `<div class="review"><h3>这次标签变更影响已排轮次</h3><p>确认前继续沿用旧标签，受影响的轮次暂缓执行。确认后需按新标签改排。</p>
           ${table(['轮次','地块','排定时间','旧标签','候选标签'],run.affected.map(r => `<tr><td>${safe(r.code)}</td><td>${safe(r.block)}</td><td>${localTime(r.starts_at)}</td><td>${tag(r.basis_profile)}</td><td>${tag(r.proposed_profile)}</td></tr>`))}
           ${supervisor ? `<form data-action="decision" data-id="${run.id}">${paragraph('reason','确认或退回理由','例：核对北坡备用探头，调整下一轮滴灌。')}
           <div class="actions"><button name="approve" value="true" class="primary">确认并标记待改排</button><button name="approve" value="false" class="secondary">退回候选标签</button></div></form>` : notice('请通知灌溉主管确认。')}</div>` : ''}
         ${healthRows?.length ? `<h3>探头覆盖</h3>${table(['地块','探头','有效读数','缺测班次'],healthRows)}` : ''}
+        ${exclusionRows.length ? `<h3>灌水排除的班次</h3><p class="muted">这些读数仍保存在采样簿中，只从模型入模快照中排除；同一班次可被多笔轮次重叠。</p>
+          ${table(['地块','班次','留档读数','排除依据轮次','入模处理'],exclusionRows)}` : ''}
         ${run?.status === 'failed' && canWrite ? `<form data-action="retry" data-id="${run.id}">${button('按原快照重试')}</form>` : ''}
         ${run ? `<p class="muted hash" title="${safe(run.digest)}">快照 ${safe(run.digest.slice(0,16))} · 计算 ${run.attempts} 次</p>` : ''}
       </section>

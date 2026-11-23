@@ -1,5 +1,5 @@
 import {roundStates} from './domain.js';
-import {safe, localTime, notice, tag, title, field, table, select, button, paragraph, num} from './ui.js';
+import {safe, localTime, inputTime, notice, tag, title, field, table, select, button, paragraph, num} from './ui.js';
 
 export function irrigationPage(blocks, rounds, selected, canWrite, supervisor) {
   const viable = blocks.filter(b => b.profile);
@@ -7,16 +7,22 @@ export function irrigationPage(blocks, rounds, selected, canWrite, supervisor) {
   const rows = rounds.map(r => `<tr class="${r.review_hold || r.state==='needs_replan' ? 'warn-row' : ''}">
     <td>${localTime(r.starts_at)}</td><td><button class="text-button" data-round="${r.id}">${safe(r.code)}</button></td>
     <td>${safe(r.block_code)} ${safe(r.block_name)}</td><td>${r.minutes} 分钟</td><td>${r.review_hold ? '待标签确认' : roundStates[r.state]}</td></tr>`);
+  const window = shown?.started_at && shown?.ended_at
+    ? `实际 ${localTime(shown.started_at)} – ${localTime(shown.ended_at)}` : '';
   return `${title('灌溉轮次', '按地块生效标签编排滴灌时段。所有时间均为中国标准时间。')}
     <div class="spread"><section><div class="section-label"><h2>滴灌排程</h2><span>按开始时间</span></div>
     ${rows.length ? table(['开始','轮次','地块','时长','状态'],rows) : notice('还没有排灌轮次。从右侧选择带生效标签的地块编排。')}
     ${shown ? `<article class="round-sheet"><span class="ref">${safe(shown.code)} · ${safe(shown.block_code)}</span><h3>${safe(shown.block_name)}</h3>
     <p>排程依据 ${tag(shown.profile)} v${shown.revision} · ${shown.minutes} 分钟 ${shown.state==='needs_replan' ? `→ 生效标签 ${tag(shown.active_profile)} v${shown.active_revision}` : ''}</p>
+    ${window ? `<p class="muted">${window} · 重叠班次读数留档但不入模</p>` : ''}
     ${shown.review_hold ? notice(`候选群落变更暂缓了本轮次。请在群落页处理 #${shown.pending_run_id}。`,'caution') : ''}
     ${canWrite && shown.state === 'needs_replan' ? `<form data-action="replan" data-id="${shown.id}">
       ${field('starts_at','改排开始时间','type="datetime-local" value="2026-11-21T08:20"')}${paragraph('reason','改排记录','写明新窗口依据')}${button('按新标签保存改排')}</form>` : ''}
-    ${canWrite && shown.state === 'scheduled' && !shown.review_hold ? `<form data-action="complete" data-id="${shown.id}" class="inline-form">
-      ${field('completed_at','实际完灌时间','type="datetime-local" value="2026-11-21T09:15"')}${button('登记完灌')}</form>` : ''}
+    ${canWrite && shown.state === 'scheduled' && !shown.review_hold ? `<form data-action="complete" data-id="${shown.id}">
+      <div class="fields">${field('started_at','实际开灌时间','type="datetime-local"',
+        inputTime(shown.starts_at) || '2026-11-21T08:20')}
+      ${field('completed_at','实际完灌时间','type="datetime-local"',
+        inputTime(new Date(new Date(shown.starts_at).getTime() + shown.minutes*60000).toISOString()))}</div>${button('登记实际开停')}</form>` : ''}
     ${shown.state === 'completed' ? `<p class="muted">${localTime(shown.completed_at)} 完灌 · <a href="#harvest">前往采收观察</a></p>` : ''}
     ${supervisor && ['scheduled','needs_replan'].includes(shown.state) ? `<details class="form-fold"><summary>取消轮次</summary><form data-action="cancel" data-id="${shown.id}">
       ${paragraph('reason','取消原因','填写停灌或调整说明')}${button('确认取消','secondary')}</form></details>` : ''}
@@ -25,7 +31,14 @@ export function irrigationPage(blocks, rounds, selected, canWrite, supervisor) {
     ${canWrite && viable.length ? `<form data-action="schedule">${field('code','轮次编号','placeholder="IR-1121A"')}
       ${select('block_id','地块',viable.map(b => [b.id,`${b.code} ${b.name}`]), shown?.block_id)}
       ${field('starts_at','开始时间','type="datetime-local" value="2026-11-21T07:00"')}${button('按标签排入轮次')}</form>
-      <p class="muted">凉湿 20 分钟 · 温和 35 分钟 · 暖干 50 分钟。地块时段不得重叠。</p>` : notice(viable.length ? '当前账号可查看轮次。' : '请先识别并发布群落标签。')}
+      <p class="muted">凉湿 20 分钟 · 温和 35 分钟 · 暖干 50 分钟。地块时段不得重叠。</p>
+      <details class="form-fold"><summary>补记已灌轮次</summary><form data-action="backfill">
+        ${field('code','轮次编号','placeholder="IR-1120X"')}
+        ${select('block_id','地块',blocks.map(b => [b.id,`${b.code} ${b.name}`]))}
+        <div class="fields">${field('started_at','实际开灌时间','type="datetime-local" value="2026-11-20T18:30"')}
+        ${field('ended_at','实际完灌时间','type="datetime-local" value="2026-11-20T19:10"')}</div>
+        ${paragraph('reason','补记说明','说明凭何种记录补入已灌轮次')}${button('补记并按实测时段入账')}</form></details>`
+      : notice(viable.length ? '当前账号可查看轮次。' : '请先识别并发布群落标签。')}
     </section></div>`;
 }
 

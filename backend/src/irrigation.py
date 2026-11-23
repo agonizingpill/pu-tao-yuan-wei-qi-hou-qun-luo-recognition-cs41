@@ -1,10 +1,13 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 
+from . import clusters
 from .db import event
 from .domain import MINUTES, Profile, RoundState
+from .exclusions import refresh_samples, samples_for_round
 from .fieldbook import one
+from .windows import CST
 
 ROUND_VIEW = '''
     SELECT r.*,b.code AS block_code,b.name AS block_name,l.profile,l.revision,
@@ -78,16 +81,71 @@ def replan(db, round_id, data, actor):
     return existing_round(db, round_id)
 
 
-def finish(db, round_id, completed_at, actor):
+def finish(db, round_id, completed_at, actor, started_at=None):
     row = existing_round(db, round_id)
+    if row['state'] == RoundState.COMPLETED and row.get('started_at') is None:
+        # A slip completed before windows were captured can still be written up.
+        return record_completion(db, row, started_at or row['starts_at'], completed_at, actor,
+                                 recorded_at=datetime.now(CST))
     if row['state'] != RoundState.SCHEDULED or row['review_hold']:
         raise HTTPException(409, '轮次须处于可执行的已排状态，待确认或改排轮次不能登记完灌')
-    if completed_at < row['starts_at'] + timedelta(minutes=row['minutes']):
+    began = started_at or row['starts_at']
+    if started_at is None and completed_at < row['starts_at'] + timedelta(minutes=row['minutes']):
         raise HTTPException(409, '完灌时间早于排定结束时间')
-    db.execute("UPDATE irrigation_round SET state='completed',completed_at=%s WHERE id=%s",
-               (completed_at, round_id))
-    event(db, actor, 'irrigation_completed', row['code'], completed_at=completed_at.isoformat())
-    return existing_round(db, round_id)
+    return record_completion(db, row, began, completed_at, actor)
+
+
+def record_completion(db, row, started_at, ended_at, actor, recorded_at=None):
+    """Commit actual run times and reconcile shift readings against them."""
+    if ended_at <= started_at:
+        raise HTTPException(409, '实际完灌时间须晚于实际开灌时间')
+    if row['state'] == RoundState.COMPLETED and row.get('started_at') is not None:
+        raise HTTPException(409, '该轮次的实测时段已入账，不能再改记')
+    db.execute('''
+        UPDATE irrigation_round
+        SET state='completed', started_at=%s, ended_at=%s, completed_at=%s
+        WHERE id=%s
+    ''', (started_at, ended_at, ended_at, row['id']))
+    completed = one(db, 'SELECT * FROM irrigation_round WHERE id=%s', (row['id'],), '灌溉轮次')
+    newly = refresh_samples(db, samples_for_round(db, completed))
+    replacement, voided, requeued = clusters.void_and_recompute(db, newly, actor, row['code'])
+    detail = {
+        'started_at': started_at.isoformat(), 'ended_at': ended_at.isoformat(),
+        'overlap_shifts': [{'block': sample['block_id'], 'day': sample['observed_day'].isoformat(),
+                            'slot': sample['slot'], 'rounds': codes} for sample, codes in newly],
+        'voided_runs': voided, 'replacement_run': replacement, 'requeued_runs': requeued,
+    }
+    if recorded_at is not None:
+        detail['backfilled_at'] = recorded_at.isoformat()
+    event(db, actor, 'irrigation_completed', row['code'], **detail)
+    result = existing_round(db, row['id'])
+    # Only a newly queued replacement needs the worker woken; the endpoint reads this.
+    result['requeued_run'] = requeued[0] if requeued else None
+    return result
+
+
+def backfill(db, data, actor):
+    """Record a completed round that was never scheduled, with its real window."""
+    if db.execute('SELECT 1 FROM irrigation_round WHERE code=%s', (data.code,)).fetchone():
+        raise HTTPException(409, '灌溉轮次编号已使用')
+    basis = one(db, '''
+        SELECT b.id AS block_id, l.id AS label_id FROM vine_block b
+        LEFT JOIN climate_label l ON l.block_id=b.id AND l.state='active'
+        WHERE b.id=%s
+    ''', (data.block_id,), '地块')
+    if basis['label_id'] is None:
+        raise HTTPException(409, '请先为该地块生成生效群落标签')
+    row = db.execute('''
+        INSERT INTO irrigation_round(code,block_id,original_label_id,label_id,starts_at,minutes,state)
+        VALUES (%s,%s,%s,%s,%s,%s,'scheduled') RETURNING id
+    ''', (data.code, data.block_id, basis['label_id'], basis['label_id'], data.started_at,
+          max(1, min(120, round((data.ended_at - data.started_at).total_seconds() / 60))))).fetchone()
+    completed = one(db, 'SELECT * FROM irrigation_round WHERE id=%s', (row['id'],), '灌溉轮次')
+    result = record_completion(db, completed, data.started_at, data.ended_at, actor,
+                               recorded_at=datetime.now(CST))
+    event(db, actor, 'irrigation_backfilled', data.code, reason=data.reason,
+          started_at=data.started_at.isoformat(), ended_at=data.ended_at.isoformat())
+    return result
 
 
 def cancel(db, round_id, reason, actor):

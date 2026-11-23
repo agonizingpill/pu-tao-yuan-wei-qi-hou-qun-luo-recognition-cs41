@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 
 from .db import event
+from .exclusions import refresh_samples
 
 
 def one(db, sql, params, what):
@@ -44,14 +45,22 @@ def record_sample(db, data, actor):
         VALUES (%(block_id)s,%(sensor)s,%(observed_day)s,%(slot)s,%(temp_c)s,%(rh_pct)s,%(source)s,%(actor)s)
         RETURNING *
     ''', dict(data, actor=actor)).fetchone()
+    # A back-dated reading may land inside an already-recorded watering window.
+    newly = refresh_samples(db, [dict(block_id=row['block_id'], observed_day=row['observed_day'],
+                                      slot=row['slot'], id=row['id'])])
     event(db, actor, 'sample_recorded', block['code'], sample_id=row['id'], slot=row['slot'],
-          day=row['observed_day'].isoformat(), source=row['source'])
+          day=row['observed_day'].isoformat(), source=row['source'],
+          exclusions=[codes for _sample, codes in newly])
     return row
 
 
 def sample_list(db, block_id):
     one(db, 'SELECT id FROM vine_block WHERE id=%s', (block_id,), '地块')
     return db.execute('''
-        SELECT * FROM microclimate_sample WHERE block_id=%s
-        ORDER BY observed_day DESC, slot LIMIT 120
+        SELECT s.*, coalesce(
+            (SELECT array_agg(r.code ORDER BY r.starts_at)
+             FROM sample_exclusion e JOIN irrigation_round r ON r.id=e.round_id
+             WHERE e.sample_id=s.id), '{}') AS excluded_by
+        FROM microclimate_sample s WHERE s.block_id=%s
+        ORDER BY s.observed_day DESC, s.slot LIMIT 120
     ''', (block_id,)).fetchall()

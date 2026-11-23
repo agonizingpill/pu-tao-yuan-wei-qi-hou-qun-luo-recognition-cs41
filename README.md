@@ -59,20 +59,30 @@ Docker 服务为 `frontend`、`backend`、`worker`、`db`、`redis`。数据库�
 
 标签候选只在变更影响已排轮次时进入主管台。确认与标记待改排在同一事务提交。凉湿、温和、暖干对应预设的 20、35、50 分钟。改排保留最初版本引用，审计附前后版本、时段与时长。录入采收观察要求轮次已完灌、时间相符且每轮仅一笔。三类标签和滴灌时长是基于合成观测的演示规则。传感器和执行设备通过人员录入与登记协作。
 
+## 完灌实测时段与班次排除
+
+昼班为 06:00–18:00，夜班为 18:00–次日 06:00，均为中国标准时间。登记完灌时同时记实际开灌与实际停灌时间；排定开始时间只作默认值。未排入即已灌的轮次可用补记登记编号、地块和实测开停，系统据实建档并完灌。
+
+与任一笔已完灌轮次的实测时段重叠的班次读数仍保存在采样簿里，但会写入 `sample_exclusion`，从入模快照中按缺测处理。同一班次被多笔轮次重叠时逐笔留痕。识别页面列出每笔灌水排除了哪一块地、哪一班读数，以及该排除是否已进入所选批次的快照。
+
+晚到的完灌记录若覆盖了待算（`queued`）或待签（`review`）批次已冻结的读数，该批次作废为 `superseded`，其候选标签一并作废；同一窗口按排除后的读数换窗重算，新批次接续。已发布的批次照常生效，不受晚到记录影响。补记与发布并发时以先取得账本锁并提交者为准；后台计算在写入前会复核批次状态，已作废批次的结果丢弃。
+
 ## 代码职责
 
 | 路径 | 说明 |
 |---|---|
 | `backend/migrations/001_field_ledger.sql` | 领域表、外键、版本和活动状态约束 |
+| `backend/migrations/002_irrigation_windows.sql` | 轮次实测开停、班次排除表与作废状态 |
 | `backend/src/schemas.py`、`backend/src/domain.py` | API 输入与领域枚举 |
 | `backend/src/app.py`、`backend/src/auth.py`、`backend/src/db.py` | 路由、权限、中间件、连接和审计 |
 | `backend/src/fieldbook.py`、`clusters.py`、`irrigation.py` | 地块采样、标签发布及滴灌与采收事务 |
+| `backend/src/windows.py`、`exclusions.py` | 昼夜班次边界、完灌时段与读数排除的核对 |
 | `backend/src/mixture.py`、`backend/src/worker.py` | GaussianMixture 拟合、Redis 通知、数据库恢复与文件证据 |
 | `backend/scripts/seed_demo.py` | 幂等初始化演示数据 |
 | `frontend/src/api.js`、`main.js`、`ui.js` | 原生 ES modules 的 API、会话与页面状态、共享组件 |
 | `frontend/src/blocks.js`、`clusters.js`、`irrigation.js` | 勘测图、识别批次、排灌、采收表单和账簿 |
 
-共享枚举 `Role`、`Slot`、`Profile`、`RoundState` 定义于 `backend/src/domain.py`、`frontend/src/domain.js`，数据库约束位于 `backend/migrations/001_field_ledger.sql`。识别批次与标签状态在数据库约束和 `backend/src/clusters.py` 中迁移，在 `frontend/src/domain.js` 中映射显示。
+共享枚举 `Role`、`Slot`、`Profile`、`RoundState`、`RunState` 定义于 `backend/src/domain.py`、`frontend/src/domain.js`，数据库约束位于 `backend/migrations/001_field_ledger.sql`。识别批次与标签状态在数据库约束和 `backend/src/clusters.py` 中迁移，在 `frontend/src/domain.js` 中映射显示。
 
 ## License
 

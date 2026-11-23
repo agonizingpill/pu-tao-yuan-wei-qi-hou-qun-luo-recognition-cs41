@@ -116,8 +116,13 @@ async function mutate(action, data, id) {
       await api(`/rounds/${id}/replan`,{...data,starts_at:chinaTime(data.starts_at)});
       return '已按生效标签重新排灌，旧标签依据已归档。';
     case 'complete':
-      await api(`/rounds/${id}/complete`,{completed_at:chinaTime(data.completed_at)});
-      return '已登记完灌。';
+      await api(`/rounds/${id}/complete`,{completed_at:chinaTime(data.completed_at),
+        ...(data.started_at ? {started_at:chinaTime(data.started_at)} : {})});
+      return '已登记实际开停时间，重叠班次按缺测留档。';
+    case 'backfill':
+      await api('/rounds/backfill',{...numeric(data,'block_id'), started_at:chinaTime(data.started_at),
+        ended_at:chinaTime(data.ended_at)});
+      return '已补记完灌轮次并按其实际时段排除重叠班次。';
     case 'cancel':
       await api(`/rounds/${id}/cancel`,data);
       return '已取消该轮次。';

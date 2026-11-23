@@ -23,8 +23,9 @@ export function blockPage(blocks, block, history, canWrite) {
           ${field('temp_c','温度 °C','type="number" min="-30" max="60" step="0.1"')}${field('rh_pct','相对湿度 %','type="number" min="0" max="100" step="0.1"')}</div>${button('归档读数')}
         </form></details>` : ''}
         <h3>近期气象采样</h3>
-        ${history.length ? table(['日期','班次','气温','湿度'], history.slice(0,12).map(r =>
-          `<tr title="${safe(r.source)}"><td>${safe(r.observed_day.slice(5))}</td><td>${slots[r.slot]}</td><td>${num(r.temp_c)} °</td><td>${num(r.rh_pct,0)}%</td></tr>`)) : notice('这个探头还没有采样记录。')}` : notice('从边界图选择地块以查看采样。')}
+        ${history.length ? table(['日期','班次','气温','湿度','入模'], history.slice(0,12).map(r =>
+          `<tr title="${safe(r.source)}" class="${r.excluded_by.length ? 'warn-row' : ''}"><td>${safe(r.observed_day.slice(5))}</td><td>${slots[r.slot]}</td><td>${num(r.temp_c)} °</td><td>${num(r.rh_pct,0)}%</td>
+          <td>${r.excluded_by.length ? `灌水排除 · ${r.excluded_by.map(safe).join('、')}` : '采用'}</td></tr>`)) : notice('这个探头还没有采样记录。')}` : notice('从边界图选择地块以查看采样。')}
       </section>
     </div>
     ${canWrite ? `<details class="form-fold bottom"><summary>登记新地块</summary><form data-action="block"><div class="fields wide">

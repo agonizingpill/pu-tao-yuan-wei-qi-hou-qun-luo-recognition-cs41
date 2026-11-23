@@ -25,4 +25,14 @@ class RoundState(StrEnum):
     CANCELLED = 'cancelled'
 
 
+class RunState(StrEnum):
+    BLOCKED = 'blocked'
+    QUEUED = 'queued'
+    EFFECTIVE = 'effective'
+    REVIEW = 'review'
+    REJECTED = 'rejected'
+    FAILED = 'failed'
+    SUPERSEDED = 'superseded'
+
+
 MINUTES = {Profile.COOL: 20, Profile.BALANCED: 35, Profile.WARM: 50}
